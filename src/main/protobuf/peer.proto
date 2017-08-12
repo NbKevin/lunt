@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package e.lent.message.peer;
+
+import "scalapb/scalapb.proto";
+
+option (scalapb.options) = {
+  package_name: "e.lent.message.peer"
+  flat_package: true
+  single_file: true
+};
+
+message Lookup {
+    string id = 1;
+    string what = 2;
+}
+
+message SecondaryLookup {
+    string id = 1;
+    string what = 2;
+    string backWhere = 3;
+}
+
+message Insert {
+    string what = 1;
+    string isWhat = 2;
+}
+
+message AddRootNodeOutsource {
+    string actorRef = 1;
+}
+
+message AddBootstrapNodeOutsources {
+    repeated string outsources = 1;
+}
+
+message ConnectToMaster {
+    string path = 1;
+}
+
+message ConnectedToMaster {
+}
+
+message SecondaryLookupResponse {
+    oneof result {
+        SecondaryLookupSucceeded succeeded = 1;
+        SecondaryLookupFailed failed = 2;
+        SecondaryLookupRedirected redirected = 3;
+    }
+}
+
+message SecondaryLookupFailed {
+    string id = 1;
+}
+
+message SecondaryLookupSucceeded {
+    string id = 1;
+    string result = 2;
+    string fromWhere = 3;
+}
+
+message SecondaryLookupRedirected {
+    string id = 1;
+    RoutingTableEntry routingTable = 2;
+}
+
+message RoutingTableEntry {
+    uint64 time = 1;
+    string actor = 2;
+}
+
+message RoutingTable {
+    uint32 maxOutsourceSize = 1;
+    repeated RoutingTableEntry outsources = 2;
+}

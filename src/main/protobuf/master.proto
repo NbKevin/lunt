@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package e.lent.message.master;
+
+import "scalapb/scalapb.proto";
+
+option (scalapb.options) = {
+  package_name: "e.lent.message.master"
+  flat_package: true
+  single_file: true
+};
+
+message Lookup {
+    // though there's been view that the use of " "
+    // does more harm than good, I believe logically necessary
+    // fields should be marked " ", since you can't
+    // really look up nothing - what would be the point?
+    // also the defensive inspection of input should be
+    // completed at the application level
+    string what = 1;
+}
+
+message Insert {
+    // similarly an insert message should always have
+    // two fields indicating its id and its content
+    string what = 1;
+    string isWhat = 2;
+    // TODO isWhat should be made of type bytes to accomodate arbitrary data
+}
+
+message RegisterNewPeer {
+    // register a new peer by its full path
+    string path = 1;
+}
+
+message RegisterNewPeerByPath {
+    // register a new peer by its actor reference
+    // DEPRECATED since the inability to use ActorRef type
+    // means essentially one has to serialise the reference
+    // manually to its full path and therefore is no different
+    // from RegisterNewPeer
+    string ref = 1;
+}
+
+message LookupFinished {
+    string id = 1;
+    string answer = 2;
+    // TODO answer should be made of type bytes to accomodate arbitrary data
+}
+
+message LookupFailed {
+    string id = 1;
+}
