@@ -24,8 +24,8 @@ message Insert {
     // similarly an insert message should always have
     // two fields indicating its id and its content
     string what = 1;
-    string isWhat = 2;
-    // TODO isWhat should be made of type bytes to accomodate arbitrary data
+    bytes isWhat = 2;
+    // FIXED isWhat should be made of type bytes to accomodate arbitrary data
 }
 
 message RegisterNewPeer {
@@ -44,7 +44,7 @@ message RegisterNewPeerByPath {
 
 message LookupFinished {
     string id = 1;
-    string answer = 2;
+    bytes answer = 2;
     // TODO answer should be made of type bytes to accomodate arbitrary data
 }
 

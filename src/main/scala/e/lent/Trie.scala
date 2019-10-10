@@ -4,8 +4,9 @@ import akka.actor.ActorRef
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
-
 import java.io.Serializable
+
+import com.google .protobuf.ByteString
 
 
 /**
@@ -16,19 +17,19 @@ object Trie {
   val ROUTING_TABLE_SIZE = 36 // as of the size of english alphabet
   val MAX_OUTSOURCE_SIZE = 3
 
-  def newNode (value: Option[Serializable], parentNode: TrieNode, key: Char): TrieNode =
+  def newNode (value: Option[ByteString], parentNode: TrieNode, key: Char): TrieNode =
     new TrieNode (ROUTING_TABLE_SIZE, value, parentNode, key)
 }
 
 object TrieLookupMessage {
   sealed abstract class LookupResult
-  final case class Succeeded (answer: Serializable) extends LookupResult
+  final case class Succeeded (answer: ByteString) extends LookupResult
   final case class RequireSecondaryLookup (fromNode: TrieNode, fromRoutingEntry: Option[RoutingEntry])
     extends LookupResult
 }
 
-class TrieNode (val routingTableSize: Int, var value: Option[Serializable],
-                val parentNode: TrieNode, val key: Char) extends Serializable {
+class TrieNode (val routingTableSize: Int, var value: Option[ByteString],
+                val parentNode: TrieNode, val key: Char) {
   val routingTable = new mutable.HashMap[Char, RoutingEntry]()
 
   def lookup (what: String, beginningWhere: Int): TrieLookupMessage.LookupResult = {
@@ -56,11 +57,11 @@ class TrieNode (val routingTableSize: Int, var value: Option[Serializable],
     }
   }
 
-  def insert (what: String, isWhat: Serializable): Unit = {
+  def insert (what: String, isWhat: ByteString): Unit = {
     insert (what, isWhat, 0)
   }
 
-  def insert (what: String, isWhat: Serializable, beginningWhere: Int): Unit = {
+  def insert (what: String, isWhat: ByteString, beginningWhere: Int): Unit = {
     // when we've reached the very bottom, insert the value
     if (beginningWhere == what.length) value = Some (isWhat)
     else {
@@ -115,7 +116,8 @@ class TrieNode (val routingTableSize: Int, var value: Option[Serializable],
       routingTable.get (currentKey) match {
         case Some (routingEntry) =>
           routingEntry.childNode match {
-            case Some (childNode) => childNode.addOutsource (what, to, beginWhere + 1)
+            case Some (childNode) =>
+              childNode.addOutsource (what, to, beginWhere + 1)
             case _ =>
               // create the child node
               val newChildNode = new TrieNode (Trie.ROUTING_TABLE_SIZE, null, this, currentKey)
@@ -149,7 +151,7 @@ class RoutingEntry (var childNode: Option[TrieNode], val maxOutsourceSize: Int) 
   def isFull: Boolean = outsources.size >= maxOutsourceSize
 
   def addOutsource (to: ActorRef): Unit = {
-    if (isFull) outsources -= outsources.minBy { (entry) => entry.time }
+    if (isFull) outsources -= outsources.minBy { entry => entry.time }
     if (outsources.exists { entry => entry.actor == to }) return
     outsources.append (new OutsourceRoutingEntry (to, System.currentTimeMillis))
   }

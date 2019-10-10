@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package e.lent.message.peer;
+
+import "scalapb/scalapb.proto";
+
+option (scalapb.options) = {
+  package_name: "e.lent.message.actor"
+  flat_package: true
+  single_file: true
+};
+
+message PseudoActorRef {
+    string fullPath = 1;
+}

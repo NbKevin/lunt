@@ -7,7 +7,9 @@ package e.lent.launcher
 import akka.actor.ActorSystem
 import akka.event.Logging
 import com.typesafe.config.ConfigFactory
-import e.lent.{Master, MasterMessage}
+import e.lent.Master
+import e.lent.message.{master => MasterMessages}
+import e.lent.util.SerialisationWrapper._
 import e.lent.util.Hash._
 
 import scala.io.{Source, StdIn}
@@ -15,7 +17,7 @@ import scala.io.{Source, StdIn}
 object RemoteMaster extends App {
   // parse config
   val config = ConfigFactory.load ("instances.conf").getConfig ("master").withFallback (ConfigFactory.load ("common.conf"))
-  val testData = config.getString("test-data")
+  val testData = config.getString ("test-data")
 
   // create system
   val localSystem = ActorSystem ("lentMaster", config)
@@ -35,9 +37,8 @@ object RemoteMaster extends App {
       .foreach {
         line =>
           val grp = line.split (" ")
-          val key = hash(s"${grp(0)} ${grp(1)}")
-          val value = grp(2)
-          master ! MasterMessage.Insert (key, value)
+          val key = hash (s"${grp (0)} ${grp (1)}")
+          master ! MasterMessages.Insert (key, grp (2) toByteString)
       }
     StdIn.readLine ()
 
@@ -46,11 +47,22 @@ object RemoteMaster extends App {
       .foreach {
         line =>
           val grp = line.split (" ")
-          val key = hash(s"${grp(0)} ${grp(1)}")
-          master ! MasterMessage.Lookup (key)
+          val key = hash (s"${grp (0)} ${grp (1)}")
+          master ! MasterMessages.Lookup (key)
       }
 
     StdIn.readLine ()
+
+    Source.fromFile (testData)
+      .getLines
+      .foreach {
+        line =>
+          val grp = line.split (" ")
+          val key = hash (s"${grp (0)} ${grp (1)}")
+          master ! MasterMessages.Lookup (key)
+      }
+
+    StdIn.readLine
   } finally {
     localSystem.terminate ()
   }

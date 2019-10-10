@@ -23,7 +23,7 @@ message SecondaryLookup {
 
 message Insert {
     string what = 1;
-    string isWhat = 2;
+    bytes isWhat = 2;
 }
 
 message AddRootNodeOutsource {
@@ -55,21 +55,16 @@ message SecondaryLookupFailed {
 
 message SecondaryLookupSucceeded {
     string id = 1;
-    string result = 2;
+    bytes result = 2;
     string fromWhere = 3;
 }
 
 message SecondaryLookupRedirected {
     string id = 1;
-    RoutingTableEntry routingTable = 2;
+    repeated OutsourceRoutingEntry routingTable = 2;
 }
 
-message RoutingTableEntry {
+message OutsourceRoutingEntry {
     uint64 time = 1;
     string actor = 2;
-}
-
-message RoutingTable {
-    uint32 maxOutsourceSize = 1;
-    repeated RoutingTableEntry outsources = 2;
 }

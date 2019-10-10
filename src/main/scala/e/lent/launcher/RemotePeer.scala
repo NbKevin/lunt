@@ -8,7 +8,8 @@ import akka.actor.ActorSystem
 import akka.event.Logging
 import com.typesafe.config.ConfigFactory
 
-import e.lent.{Peer, PeerMessage}
+import e.lent.Peer
+import e.lent.message.{peer => PeerMessages}
 import e.lent.util.Generate._
 import e.lent.util.Hash.hash
 
@@ -29,6 +30,7 @@ object RemotePeer extends App {
 
   // create system
   val localSystem = ActorSystem ("lentMaster", config)
+  e.lent.message.master.RegisterNewPeer
 
   // set log level
   val debug = config.getBoolean ("debug")
@@ -37,7 +39,7 @@ object RemotePeer extends App {
   try {
     val peerName = hash (makeRandomString (12))
     val peer = localSystem.actorOf (Peer.makeNew (peerName, null), peerName)
-    peer ! PeerMessage.ConnectToMaster (masterPath)
+    peer ! PeerMessages.ConnectToMaster (masterPath)
     println (">>> Press ENTER to exit <<<")
     StdIn.readLine ()
   } finally {

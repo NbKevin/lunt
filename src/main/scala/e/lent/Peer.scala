@@ -5,7 +5,6 @@ package e.lent
   */
 
 import akka.actor.{Actor, ActorLogging, ActorRef, Props}
-import akka.serialization.Serialization.serializedActorPath
 
 import scala.collection.mutable.ListBuffer
 import scala.util.{Failure, Success}
@@ -13,24 +12,25 @@ import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
 
 import e.lent.util.Hash.hash
+import e.lent.message.{peer => PeerMessages}
+import e.lent.message.{master => MasterMessages}
+import e.lent.util.SerialisationWrapper._
 
-import java.io.Serializable
 
-
-object PeerMessage {
-  /**
-    * Exhaustive message cases for incoming requests for peers.
-    */
-  sealed abstract class IncomingPeerRequest
-  final case class Lookup (what: String, id: String) extends IncomingPeerRequest
-  final case class SecondaryLookup (what: String, id: String, backWhere: ActorRef) extends IncomingPeerRequest
-  final case class Insert (what: String, isWhat: Serializable) extends IncomingPeerRequest
-  final case class SecondaryLookupResponse (result: Peer.SecondaryLookupResult.Result) extends IncomingPeerRequest with Serializable
-  final case class AddRootNodeOutsource (peer: ActorRef) extends IncomingPeerRequest
-  final case class SetBootstrapRootOutsource (bootstrapRootOutsources: List[ActorRef]) extends IncomingPeerRequest
-  final case class ConnectToMaster (path: String) extends IncomingPeerRequest
-  final case class ConnectedToMaster () extends IncomingPeerRequest
-}
+//object PeerMessage {
+//  /**
+//    * Exhaustive message cases for incoming requests for peers.
+//    */
+//  sealed abstract class IncomingPeerRequest
+//  final case class Lookup (what: String, id: String) extends IncomingPeerRequest
+//  final case class SecondaryLookup (what: String, id: String, backWhere: ActorRef) extends IncomingPeerRequest
+//  final case class Insert (what: String, isWhat: Serializable) extends IncomingPeerRequest
+//  final case class SecondaryLookupResponse (result: Peer.SecondaryLookupResult.Result) extends IncomingPeerRequest with Serializable
+//  final case class AddRootNodeOutsource (peer: ActorRef) extends IncomingPeerRequest
+//  final case class SetBootstrapRootOutsource (bootstrapRootOutsources: List[ActorRef]) extends IncomingPeerRequest
+//  final case class ConnectToMaster (path: String) extends IncomingPeerRequest
+//  final case class ConnectedToMaster () extends IncomingPeerRequest
+//}
 
 object Peer {
   /**
@@ -66,27 +66,28 @@ class Peer (val name: String, var masterRef: ActorRef) extends Actor with ActorL
 
   /** dispatch messages */
   override def receive: Receive = {
-    case PeerMessage.Lookup (what, id) =>
+    case PeerMessages.Lookup (what, id) =>
       log.debug (s"incoming request #$id: lookup <$what>")
       lookup (what, id)
-    case PeerMessage.Insert (what, isWhat) =>
+    case PeerMessages.Insert (what, isWhat) =>
       log.debug (s"incoming request: insert <$what => $isWhat>")
       rootNode.insert (what, isWhat)
-    case PeerMessage.SecondaryLookupResponse (result) =>
+    case PeerMessages.SecondaryLookupResponse (result) =>
       log.debug (s"incoming response: secondary lookup completed <$result>")
-      processSecondaryLookupResult (result)
-    case PeerMessage.SetBootstrapRootOutsource (bootstrapRootOutsources) =>
+      processSecondaryLookupResponse (result) // TODO fix this
+    case PeerMessages.AddBootstrapNodeOutsources (bootstrapRootOutsources) =>
       log.debug (s"incoming request: bootstrap root outsource <size ${bootstrapRootOutsources.size}>")
-      setBootstrapRootOutsources (bootstrapRootOutsources)
-    case PeerMessage.AddRootNodeOutsource (peer) =>
-      log.debug (s"incoming request: add peer to root outsource <${peer.path.name}>")
-      addRootNodeOutsource (peer)
-    case PeerMessage.SecondaryLookup (what, id, backWhere) =>
-      log.debug (s"incoming request #$id: secondary lookup <$what>, from <${backWhere.path.name}>")
-      runSecondaryLookup (what, id, backWhere)
-    case PeerMessage.ConnectToMaster (path) =>
+      setBootstrapRootOutsources (bootstrapRootOutsources.map (
+        _.deserialiseWithContext (context))) // TODO fix this
+    case PeerMessages.AddRootNodeOutsource (peer) =>
+      log.debug (s"incoming request: add peer to root outsource <$peer>")
+      addRootNodeOutsource (peer.deserialiseWithContext (context)) // TODO fix this
+    case PeerMessages.SecondaryLookup (id, what, backWhere) =>
+      log.debug (s"incoming request #$id: secondary lookup <$what>, from <$backWhere>")
+      runSecondaryLookup (what, id, backWhere.deserialiseWithContext (context)) // TODO fix this
+    case PeerMessages.ConnectToMaster (path) =>
       log.debug (s"incoming request: connect to master <$path>")
-      connectToMaster (path)
+      connectToMaster (path) // TODO fix this
     case _ =>
       log.warning ("unknown request")
   }
@@ -96,7 +97,7 @@ class Peer (val name: String, var masterRef: ActorRef) extends Actor with ActorL
     context.actorSelection (path).resolveOne (20 seconds) onComplete {
       case Success (actorRef) =>
         masterRef = actorRef
-        actorRef ! MasterMessage.RegisterNewPeer (serializedActorPath (self))
+        actorRef ! MasterMessages.RegisterNewPeer (self.serialise)
         log.info (s"connected to master <$path>")
       case Failure (exception) => log.error (s"cannot connect to master <$path>: ${exception.getMessage}")
     }
@@ -104,47 +105,65 @@ class Peer (val name: String, var masterRef: ActorRef) extends Actor with ActorL
 
   /** root node, has a fake sentinel parent */
   val rootNode = new TrieNode (Trie.ROUTING_TABLE_SIZE, null, SentinelParent, null.asInstanceOf [Char])
-  (97 to 122).foreach ((ascii) => rootNode.routingTable.put (ascii.toChar, new RoutingEntry (null, Trie.MAX_OUTSOURCE_SIZE)))
-  (48 to 57).foreach ((ascii) => rootNode.routingTable.put (ascii.toChar, new RoutingEntry (null, Trie.MAX_OUTSOURCE_SIZE)))
+  (97 to 122).foreach (ascii => rootNode.routingTable.put (ascii.toChar, new RoutingEntry (null, Trie.MAX_OUTSOURCE_SIZE)))
+  (48 to 57).foreach (ascii => rootNode.routingTable.put (ascii.toChar, new RoutingEntry (null, Trie.MAX_OUTSOURCE_SIZE)))
 
   /** set bootstrap root outsources */
-  def setBootstrapRootOutsources (bootstrapRootOutsources: List[ActorRef]): Unit =
-    bootstrapRootOutsources.foreach { (peer) => addRootNodeOutsource (peer) }
+  def setBootstrapRootOutsources (bootstrapRootOutsources: TraversableOnce[ActorRef]): Unit =
+    bootstrapRootOutsources.foreach { peer => addRootNodeOutsource (peer) }
 
-  /** deal with secondary lookup result */
-  def processSecondaryLookupResult (result: Peer.SecondaryLookupResult.Result): Unit = {
+  /* silently fail the lookup if responses come back with unknown ids */
+  private def silentlyFailUnknownId (id: String): Unit = {
+    log.error (s"secondary lookup failed because an unknown id is returned: #$id")
+    masterRef.tell (MasterMessages.LookupFailed (id), self)
+  }
+
+  /* deal with secondary lookup result */
+  def processSecondaryLookupResponse (result: PeerMessages.SecondaryLookupResponse.Result): Unit = {
     result match {
-      case Peer.SecondaryLookupResult.Failed (id) =>
+      case PeerMessages.SecondaryLookupResponse.Result.Failed (message) =>
         // if this particular secondary lookup failed we simply turn back to the
         // local candidates and continue secondary lookup
         log.info ("search returned no result, returning back to internal candidates")
-        getSecondaryLookup (id) match {
-          case Some (foo) => issueSecondaryLookup (foo)
-          case _ => throw new RuntimeException (s"secondary lookup returned with unknown id: #$id")
+        getSecondaryLookup (message.id) match {
+          case Some (foo) =>
+            issueSecondaryLookup (foo)
+          case _ =>
+            silentlyFailUnknownId (message.id)
         }
-      case Peer.SecondaryLookupResult.Succeeded (answer, fromWhere, id) =>
+
+      case PeerMessages.SecondaryLookupResponse.Result.Succeeded (message) =>
         // if succeeded, send the answer back to master
         // and update local outsources in accordance
-        log.info (s"search returned definite result: $answer, #$id")
-        getSecondaryLookup (id) match {
+        log.info (s"search returned definite result: ${message.result}, #${message.id}")
+        getSecondaryLookup (message.id) match {
           case Some (idAwareSecondaryLookup) =>
             secondaryLookupQueue -= idAwareSecondaryLookup
-            // DONE: update local outsources
             // TODO: adjust the Succeeded message to include what and toWhere
-            val whatHash = hash(idAwareSecondaryLookup._2.what)
-            rootNode.addOutsource (whatHash, fromWhere)
-          case _ => throw new RuntimeException (s"secondary lookup returned with unknown id: #$id")
+            // FIXED: update local outsources
+            val whatHash = hash (idAwareSecondaryLookup._2.what)
+            rootNode.addOutsource (whatHash, message.fromWhere.deserialiseWithContext (context))
+          case _ =>
+            silentlyFailUnknownId (message.id)
         }
-        masterRef ! MasterMessage.LookupFinished (answer, id)
-      case Peer.SecondaryLookupResult.NeedFurtherLookup (routingTable, id) =>
+        masterRef ! MasterMessages.LookupFinished (message.id, message.result)
+
+      case PeerMessages.SecondaryLookupResponse.Result.Redirected (message) =>
         // if a new outsource candidate is returned, update it into the
         // secondary lookup queue and initiate a new lookup
-        getSecondaryLookup (id) match {
+        getSecondaryLookup (message.id) match {
           case Some ((_, secondaryLookup)) =>
-            secondaryLookup.outsourceRoutingEntries.appendAll (routingTable.outsources)
-            issueSecondaryLookup (id, secondaryLookup)
-          case _ => throw new RuntimeException (s"secondary lookup returned with unknown id: #$id")
+            secondaryLookup.outsourceRoutingEntries.appendAll (
+              message.routingTable.map (_.deserialise (context)))
+            issueSecondaryLookup (message.id, secondaryLookup)
+          case _ =>
+            silentlyFailUnknownId (message.id)
         }
+
+      case _ =>
+        // this should never happen given that the only types confronting to secondary
+        // lookup responses are all tested now, all we can do is to throw an error
+        throw new RuntimeException ("unknown secondary lookup response type")
     }
   }
 
@@ -160,7 +179,7 @@ class Peer (val name: String, var masterRef: ActorRef) extends Actor with ActorL
     * @return associated secondary lookup, nullable
     */
   def getSecondaryLookup (id: String): Option[IdAwareSecondaryLookup] = {
-    val filterResult = secondaryLookupQueue.filter ((secondaryLookup) => secondaryLookup._1 == id)
+    val filterResult = secondaryLookupQueue.filter (secondaryLookup => secondaryLookup._1 == id)
     if (filterResult.size != 1) null
     else Some (filterResult.last)
   }
@@ -273,20 +292,21 @@ class Peer (val name: String, var masterRef: ActorRef) extends Actor with ActorL
     secondaryLookup.nextPeer match {
       case Some (peer) =>
         // if there is still candidate peer to issue lookup to then do it
-        peer.actor ! PeerMessage.SecondaryLookup (secondaryLookup.what, id, self)
+        peer.actor.tell(PeerMessages.SecondaryLookup (id, secondaryLookup.what, self.serialise), self)
       case _ =>
         // lookup fails when no more peer's available
-        //        secondaryLookupQueue -= idAwareSecondaryLookup
-        masterRef ! MasterMessage.LookupFailed (id)
+        secondaryLookupQueue -= idAwareSecondaryLookup
+        masterRef.tell(MasterMessages.LookupFailed (id), self)
     }
   }
 
   /** lookup something */
-  def lookup (what: String, id: String): Any = {
+  def lookup (what: String, id: String): Unit = {
     val internalLookupResult = rootNode.lookup (what, 0)
     internalLookupResult match {
       case TrieLookupMessage.Succeeded (answer) =>
-        masterRef ! MasterMessage.LookupFinished (answer, id)
+        // TODO change the signature of Node::lookup(string, int): ByteString
+        masterRef ! MasterMessages.LookupFinished (id, answer)
       case TrieLookupMessage.RequireSecondaryLookup (fromNode, maybeRoutingEntry) =>
         issueSecondaryLookup (fromNode, maybeRoutingEntry, id, what)
     }
@@ -297,20 +317,22 @@ class Peer (val name: String, var masterRef: ActorRef) extends Actor with ActorL
     val internalLookupResult = rootNode.lookup (what, 0)
     internalLookupResult match {
       case TrieLookupMessage.Succeeded (answer) =>
-        backWhere ! PeerMessage.SecondaryLookupResponse (Peer.SecondaryLookupResult.Succeeded (answer, self, id))
+        backWhere ! PeerMessages.SecondaryLookupResponse ()
+          .withSucceeded (PeerMessages.SecondaryLookupSucceeded (id, answer, self.serialise))
       case TrieLookupMessage.RequireSecondaryLookup (fromNode, fromRoutingEntry) =>
         fromRoutingEntry match {
           case Some (routingEntry) =>
             // return directly if the from routing entry is non empty unless it is the root node
             if (fromNode.parentNode == SentinelParent || fromNode == rootNode)
-              backWhere ! PeerMessage.SecondaryLookupResponse (Peer.SecondaryLookupResult.Failed (id))
+              backWhere ! PeerMessages.SecondaryLookupResponse ()
+                .withFailed (PeerMessages.SecondaryLookupFailed (id))
             else
-              backWhere ! PeerMessage.SecondaryLookupResponse (Peer.SecondaryLookupResult.NeedFurtherLookup (routingEntry, id))
+              backWhere ! PeerMessages.SecondaryLookupResponse ().withRedirected (
+                PeerMessages.SecondaryLookupRedirected (id, routingEntry.outsources.map (_.serialise)))
           case _ =>
             // otherwise trace back to the routing entry with the longest common prefix
             var currentNode = fromNode
             var currentRoutingEntry = fromRoutingEntry
-            //
             while ((currentRoutingEntry == null || currentRoutingEntry.get.outsources.isEmpty)
               && currentNode.parentNode != SentinelParent) {
               currentRoutingEntry = currentNode.parentNode.routingTable.get (currentNode.key)
@@ -321,9 +343,11 @@ class Peer (val name: String, var masterRef: ActorRef) extends Actor with ActorL
               // are the ones of the root node, which is identical across all peers, meaning
               // it is unnecessary to return it to the caller
               case Some (routingEntry) if routingEntry.outsources.nonEmpty =>
-                backWhere ! PeerMessage.SecondaryLookupResponse (Peer.SecondaryLookupResult.NeedFurtherLookup (routingEntry, id))
+                backWhere ! PeerMessages.SecondaryLookupResponse ().withRedirected (
+                  PeerMessages.SecondaryLookupRedirected (id, routingEntry.outsources.map (_.serialise)))
               case _ =>
-                backWhere ! PeerMessage.SecondaryLookupResponse (Peer.SecondaryLookupResult.Failed (id))
+                backWhere ! PeerMessages.SecondaryLookupResponse ()
+                  .withFailed (PeerMessages.SecondaryLookupFailed (id))
             }
         }
     }
